@@ -1,39 +1,78 @@
 # DigitalTwinSysmlv2CM
+
 ## Prerequisites
+
 - docker
 - python
 - a .sysml input file with model which uses the Digital
+
 ## Setup
+
 ```bash
 python -m venv venv
 ```
+
 ```bash
 #Ubuntu
 source venv/bin/activate
 ```
+
 Start docker
+
 ```bash
 cd apiserver
-docker-compose up -d 
+docker-compose up -d
 cd ..
 ```
+
+### Containerized execution
+
+The repository-level Compose file starts the SysML kernel and runs the converter
+with the sample input, output, and strategy-code directories mounted:
+
+```bash
+docker compose run --rm --build digital-twin-profile-sysml-v2
+```
+
+The default bind mounts are:
+
+- `./src/sysmlfiles` -> `/pipeline/input` (read-only)
+- `./output` -> `/pipeline/output`
+- `./testLambdaFunctions` -> `/pipeline/code` (read-only)
+
+Override them with `DTP_V2_INPUT_HOST_DIR`, `DTP_V2_OUTPUT_HOST_DIR`, and
+`PIPELINE_CODE_HOST_DIR`. To rewrite absolute strategy paths stored in a model,
+set one or more semicolon-separated mappings:
+
+```bash
+DTP_PATH_MAP="/host/code=/pipeline/code;/other/code=/pipeline/code/other"
+```
+
+The converter needs access to `/var/run/docker.sock` because it executes the SysML helper in the kernel container.
+
 ### Execution
+
 place your sysml files in the src/sysmlfiles directory
+
 ```bash
 python -m src.main ./src/sysmlfiles/
 ```
+
 The json for the deployer will be then in the ouptut folder.
+
 ## DigitalTwinLibrary – Definition & Usage Concept
+
 ### 1. Core Concept: The Casing Rule
+
 All user-defined keywords follow a strict DEFINITION vs. USAGE pattern to separate abstract types from actual deployable instances.
 
 - Capitalized Keyword (#Entity) → DEFINITION (Type-Level)
-- Lowercase Keyword (#entity)   → USAGE (Instance-Level)
+- Lowercase Keyword (#entity) → USAGE (Instance-Level)
 
 ---
 
-
 ### 2. Definition Keywords (Type-Level)
+
 Applied to `def` blocks to introduce reusable types into the model.
 
 - #Twin: Defines the root container and global storage/retention policies.
@@ -46,65 +85,73 @@ Applied to `def` blocks to introduce reusable types into the model.
 ---
 
 ### 3. Usage Keywords (Instance-Level)
+
 Applied to properties or blocks to instantiate a Definition. These represent concrete, deployable elements.
 
 #### #entity
+
 - Hierarchy: Must exist within a #Twin or another #entity.
 - Purpose: Represents a physical/logical asset instance.
 - Constraint: Missing a valid parent triggers an error.
 
 #### #component
+
 - Hierarchy: Must exist within a valid #entity.
 - Purpose: Groups measurements and functional logic for a specific device.
 - Constraint: If the parent #entity is missing, mapping fails.
 
 #### #measureAttribute
+
 - Hierarchy: Must be defined inside a #component.
 - Purpose: Represents live telemetry data (e.g., temperature, consumption).
-- Attributes: 
-    - dataType: [INTEGER; DOUBLE; STRING]
+- Attributes:
+  - dataType: [INTEGER; DOUBLE; STRING]
 - Example:
-    ```sysml
-    #measureAttribute consumption {
-        :>> dataType default AttributeDataType::DOUBLE;
-    }
-    ```
+  ```sysml
+  #measureAttribute consumption {
+      :>> dataType default AttributeDataType::DOUBLE;
+  }
+  ```
 
 #### #constAttribute
+
 - Hierarchy: Must exist inside an #entity.
 - Purpose: Represents static metadata (e.g., max capacity, serial number).
 - Attributes:
-    - value: The actual string representation of the constant.
-    - dataType: [INTEGER; DOUBLE; STRING]
+  - value: The actual string representation of the constant.
+  - dataType: [INTEGER; DOUBLE; STRING]
 
 #### #condition
+
 - Hierarchy: Must exist within a #Twin.
 - Purpose: Defines the logic for an automated action (e.g., "If A > B").
 - Elements: Requires leftOperand, operator, and rightOperand.
 
 #### #strategyAction
+
 - Hierarchy: Must exist inside a #condition.
 - Purpose: The specific task to execute when a condition is met (e.g., Lambda function).
 - Validation: `customPayload` must be a valid JSON string.
 
 #### Feedback Scenarios:
+
 1. **EXTERN:** When `external` is set to `true`, the deployer assumes the function is already hosted externally. It will not upload code but requires an `externalTopic`.
-    ```sysml
-    #strategyAction alertAction {
-        :>> name = "Alert Action";
-        :>> external = true;
-        :>> feedbackTopicType = FeedbackTopicType::EXTERN;
-        :>> externalTopic = "EXTERN_TPIC";
-        :>> customPayload = "{\"message\":\"High Consumption Alert\"}";
-    }
-    ```
+   ```sysml
+   #strategyAction alertAction {
+       :>> name = "Alert Action";
+       :>> external = true;
+       :>> feedbackTopicType = FeedbackTopicType::EXTERN;
+       :>> externalTopic = "EXTERN_TPIC";
+       :>> customPayload = "{\"message\":\"High Consumption Alert\"}";
+   }
+   ```
 2. **INTERN:** Result is sent back to a system component. Use the key `componentTopic` to target a component.
-    ```sysml
-    #strategyAction alertAction2 {
-        :>> feedbackTopicType = FeedbackTopicType::INTERN;
-        :>> componentTopic = MicroGrid.battery.p12;
-    }
-    ```
+   ```sysml
+   #strategyAction alertAction2 {
+       :>> feedbackTopicType = FeedbackTopicType::INTERN;
+       :>> componentTopic = MicroGrid.battery.p12;
+   }
+   ```
 3. **NOFEEDBACK (Default):** If the type is not set, it defaults to `NOFEEDBACK`. The system assumes the function returns nothing and performs no downstream messaging.
 
 ---
@@ -114,23 +161,28 @@ Applied to properties or blocks to instantiate a Definition. These represent con
 The DigitalTwinProfile supports SysML v2 inheritance patterns to keep models clean and readable.
 
 #### 4.1 Keyword Elision (Semantic Inheritance)
+
 If a usage redefines or subsets an element that was already marked with a user-defined keyword higher up in the hierarchy, the hashtag keyword can be omitted.
+
 - The parser recognizes the semantic identity through the redefinition chain.
 - For subsetting when y inherited and not subsetted the parser will use this. When you subsett it then it will use the subsetted feature.
 - **Example:** If `maxConsumption` is defined as a `#constAttribute` in a parent `Entity`, the redefinition `mComp :>> maxConsumption` is automatically treated as a `#constAttribute` without needing the hashtag again.
 
 #### 4.2 Renaming during Redefinition
+
 When redefining, the attribute name can be changed to fit the local context.
+
 - The Digital Twin mapping will use the **new name** (left of the colon).
 - **Example:** `mComp :>> maxConsumption` results in a property named "mComp" in the twin.
 
 #### 4.3 Attribute Value Mapping
+
 Also the default value for example for a #constAttribute will be searched through the hierarchy. You see more in the example below.
 Internal fields (like `value`) should be mapped using redefinition for initialization.
-- **Example:** ` :>> value default "23.0"` maps a local attribute to the constant's data field.
-also possible renaming(which will have no effect o the deplyoment)
-- **Example:** `value2 :>> value default "23.0"`.
 
+- **Example:** ` :>> value default "23.0"` maps a local attribute to the constant's data field.
+  also possible renaming(which will have no effect o the deplyoment)
+- **Example:** `value2 :>> value default "23.0"`.
 
 ---
 
@@ -143,11 +195,13 @@ also possible renaming(which will have no effect o the deplyoment)
 3. **Unique IDs:** Each usage receives a stable UUID generated from its hierarchical path string. This ensures idempotency and prevents duplicate resources on re-runs.
 
 4. **Nonames** are not allowed
+
 ```sysml
 #Component <here has to be a name> def {
 
 }
 ```
+
 ---
 
 ### 6. Example Mapping
@@ -187,19 +241,19 @@ package MG {
         part testNotIncuded;
     }
 
- 
+
     #Twin def MGTwin {
-        
+
         #entity MicroGrid {
-            
+
 
             #entity battery : Battery {
                 mComp :>> maxConsumption {
                     :>> value2 = "3.0";
                 }
-                
-                internalInverter :> inverter; 
-                
+
+                internalInverter :> inverter;
+
                 test :> test;
 
                 #component p12 :>> batterySensor;
@@ -217,15 +271,15 @@ package MG {
 
 
             #entity edgeCaseNode : AbstractEntity {
-               
+
             }
         }
 
         #condition CheckBatteryConsumption {
             :>> operator = ComparisonOperator::GREATER_THAN;
-            
+
             :>> leftOperand  = MicroGrid.sieVercharge.p13.consumption;
-        
+
             :>> rightOperand = MicroGrid.battery.mComp;
             #strategyAction alertAction {
                 :>> name = "Alert Action";
@@ -258,7 +312,8 @@ package MG {
 }
 ```
 
-#### Output: 
+#### Output:
+
 ```json
 //config_events.json
 [

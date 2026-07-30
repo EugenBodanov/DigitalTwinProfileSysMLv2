@@ -63,7 +63,7 @@ def parseSysmlToTwinClass(sysmlDirPath: str, outputFolder="output") -> list[Twin
     sysml_files = exchangeService.read_sysml_files()
     if not sysml_files:
         logging.error("No .sysml files found in the provided directory.")
-        return
+        return []
     path = exchangeService.sendToApi(sysml_files)
     logging.info("Environment setup complete.")
 
@@ -79,6 +79,11 @@ def parseSysmlToTwinClass(sysmlDirPath: str, outputFolder="output") -> list[Twin
 def main():
     filepath,outputPath = args_check()
     twins = parseSysmlToTwinClass(filepath)
+    if not twins:
+        logging.error("No digital twin models were generated.")
+        return 1
+
+    generated_twins = 0
     for twin in twins:
         if len(twin.name) > 10:
             logging.warning(f"Twin Model name '{twin.name}' is longer than 10 characters and will not be considered")
@@ -102,7 +107,14 @@ def main():
             with open(os.path.join(dir_path, f"{filename}.json"), "w") as f:
                 import json
                 json.dump(clean_content, f, indent=4)
+        generated_twins += 1
+
+    if generated_twins == 0:
+        logging.error("All generated twin names were longer than 10 characters.")
+        return 1
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

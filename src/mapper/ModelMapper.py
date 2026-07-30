@@ -17,7 +17,10 @@ import logging
 from src.api.MetaTypes import MetaTypes
 import json
 import sys
+from src.path_mapping import PATH_MAP_ENV, map_configured_path
 import src.utils.globals as globals
+
+
 class MapRoutine:
     T = TypeVar("T", bound=TwinModel)
  
@@ -167,12 +170,15 @@ class StrategyRoutine(MapRoutine):
             sys.exit(1)
  
         strategy.strategyType = StrategyType(str(self.traversal.resolve_enum_ref(element, "strategyType")).lower())
-        strategy.pathToCode = str(self.traversal.resolve_string(element, "pathToCode"))
+        strategy.pathToCode = map_configured_path(str(self.traversal.resolve_string(element, "pathToCode")))
         strategy.external = self.traversal.resolve_bool(element, "external")
         if strategy.external is False:
             path_obj = Path(strategy.pathToCode)
             if not path_obj.exists() or path_obj.is_file():
-                logging.warning(f"Strategy {element.name} has invalid pathToCode: {strategy.pathToCode}")
+                logging.warning(
+                    f"Strategy {element.name} has invalid pathToCode: {strategy.pathToCode}. "
+                    f"Configure {PATH_MAP_ENV} to rewrite host paths to container paths."
+                )
             else:
                 strategy.pathToCode = str(path_obj)
         strategy.feedbackTopicType = FeedbackTopicType(str(self.traversal.resolve_enum_ref(element, "feedbackTopicType")).upper())
@@ -266,5 +272,3 @@ class ModelMapper:
                     raise Exception("Multiplicity detected at user defined keyword.")
                 return True
         return self.traversal.find_in_hierarchy(feature, check, visited)[0]
-    
-    
