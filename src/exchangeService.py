@@ -1,7 +1,6 @@
 import os
 import logging
 import subprocess
-import sys
 
 EXPORT_PATH_KEY = "Export path:"
 
@@ -24,34 +23,35 @@ class ExchangeService:
         ])
 
     def sendToApi(self, data: list[str]) -> str:
-        logging.info("Uploading SysML files to the API...")
-        print(f">> Uploading files: {data}", flush=True)
-        result = subprocess.run(
+        logging.info("Processing SysML files...")
+        print(f">> SysML files: {data}", flush=True)
+        with subprocess.Popen(
             ["sh", self.upload_script_path, *data],
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             text=True,
-        )
-        if result.returncode != 0:
-            logging.error("STDOUT: %s", result.stdout)
-            logging.error("STDERR: %s", result.stderr)
-            sys.exit(1)
+            bufsize=1,
+        ) as process:
+            lines = []
+            for line in process.stdout:
+                print(line, end="", flush=True)
+                lines.append(line)
+            returncode = process.wait()
 
-        logging.info("Full STDOUT: %s", result.stdout)
+        if returncode != 0:
+            raise RuntimeError(f"SysML processing failed with exit code {returncode}")
 
         export_line = next(
-            (line for line in result.stdout.splitlines() if line.strip().startswith(EXPORT_PATH_KEY)),
+            (line for line in lines if line.strip().startswith(EXPORT_PATH_KEY)),
             None,
         )
         if not export_line:
-            logging.error("%s not found in SysML kernel output", EXPORT_PATH_KEY)
-            sys.exit(1)
+            raise RuntimeError(f"{EXPORT_PATH_KEY} not found in SysML converter output")
 
         container_path = export_line.split(":", 1)[1].strip()
         if not container_path or container_path == "NOT_FOUND":
-            logging.error("SysML kernel did not produce an export file")
-            sys.exit(1)
+            raise RuntimeError("SysML kernel did not produce an export file")
 
         local_path = os.path.join(os.path.dirname(self.upload_script_path), "export.json")
 
@@ -62,8 +62,16 @@ class ExchangeService:
             text=True,
         )
         if cp_result.returncode != 0:
-            logging.error("docker cp failed: %s", cp_result.stderr)
-            sys.exit(1)
+            raise RuntimeError(f"docker cp failed: {cp_result.stderr}")
 
-        logging.info(f"Export saved to: {local_path}")
+        cleanup_result = subprocess.run(
+            ["docker", "exec", self.container_name, "rm", "-f", container_path],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if cleanup_result.returncode != 0:
+            logging.warning("Could not delete container export: %s", container_path)
+
+        logging.info("Export saved to: %s", local_path)
         return local_path

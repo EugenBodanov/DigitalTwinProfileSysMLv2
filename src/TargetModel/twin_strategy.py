@@ -18,20 +18,15 @@ class FeedbackTopicType(Enum):
     NOFEEDBACK = "NOFEEDBACK"
 
 
-@dataclass
-class ActionOutputParameterType:
-    name: str
-    type: AttributeDataType
-
 
 @dataclass
-class ActionInputParameter:
+class StrategyParameter:
     attribute: MeasureAttribute
     customName: str = ""
 
     @property
     def resolved_name(self) -> str:
-        return self.customName if self.customName != "inputParameters" else self.attribute.name
+        return self.customName if self.customName != "" else self.attribute.name
 
 
 @dataclass
@@ -43,9 +38,9 @@ class Strategy(TwinModel):
     customPayload: Optional[dict] = None
     componentTopic: Optional[Component] = None
     externalTopic: str = ""
-    inputParameters: list[ActionInputParameter] = field(default_factory=list)
+    inputParameters: list[StrategyParameter] = field(default_factory=list)
     constInputParameters: list[ConstAttribute] = field(default_factory=list)
-    outputParameters: list[ActionOutputParameterType] = field(default_factory=list)
+    outputParameters: list[StrategyParameter] = field(default_factory=list)
 
     def _build_feedback_dict(self) -> dict:
         feedback: dict = {"type": "mqtt"}
@@ -56,9 +51,9 @@ class Strategy(TwinModel):
         feedback["payload"] = self.customPayload or "action-result"
         return feedback
 
-    def _serialize_input_parameters(self) -> list[dict]:
+    def _serialize_parameters(self,parameters: list[StrategyParameter]) -> list[dict]:
         result = []
-        for param in self.inputParameters:
+        for param in parameters:
             entry = param.attribute.to_event_dict()
             entry["name"] = param.resolved_name
             entry["id"] = self.getOperandChain(param.attribute)
@@ -81,6 +76,6 @@ class Strategy(TwinModel):
         if self.feedbackTopicType != FeedbackTopicType.NOFEEDBACK:
             res["feedback"] = self._build_feedback_dict()
 
-        res["inputParameters"] = self._serialize_input_parameters()
-        res["outputParameters"] = self._serialize_output_parameters()
+        res["inputParameters"] = self._serialize_parameters(self.inputParameters)
+        res["outputParameters"] = self._serialize_parameters(self.outputParameters)
         return res

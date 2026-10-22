@@ -18,7 +18,6 @@ fi
 SYSML_CONTENT=$(cat -- "$@")
 
 docker cp "$HELPER_SCRIPT" "$CONTAINER_NAME:/tmp/process_sysml.py"
-docker exec \
-  -e SYSML_CONTENT="$SYSML_CONTENT" \
+printf '%s\n' "$SYSML_CONTENT" | docker exec -i \
   "$CONTAINER_NAME" \
-  conda run --no-capture-output -n sysml python /tmp/process_sysml.py < /dev/null
+  conda run --no-capture-output -n sysml python /tmp/process_sysml.py

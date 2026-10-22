@@ -41,7 +41,11 @@ def connect_to_kernel() -> BlockingKernelClient:
     client = BlockingKernelClient()
     client.load_connection_file(str(connection_file))
     client.start_channels()
-    client.wait_for_ready(timeout=KERNEL_READY_TIMEOUT_SECONDS)
+    try:
+        client.wait_for_ready(timeout=KERNEL_READY_TIMEOUT_SECONDS)
+    except Exception:
+        client.stop_channels()
+        raise
     return client
 
 
@@ -60,6 +64,7 @@ def save_export_from_message(message: dict) -> None:
 def run_command(client: BlockingKernelClient, command: str, timeout: int) -> None:
     message_id = client.execute(command)
     deadline = time.monotonic() + timeout
+    kernel_errors = []
 
     while True:
         remaining = deadline - time.monotonic()
@@ -72,7 +77,20 @@ def run_command(client: BlockingKernelClient, command: str, timeout: int) -> Non
 
         message_type = message.get("header", {}).get("msg_type")
         if message_type in ("execute_result", "display_data"):
+            text = message.get("content", {}).get("data", {}).get("text/plain", "")
+            if text:
+                print(text, flush=True)
+                if "ERROR:" in text or "WARNING:" in text:
+                    kernel_errors.append(text.strip())
             save_export_from_message(message)
+        elif message_type == "stream":
+            content = message.get("content", {})
+            text = content.get("text", "")
+            print(text, end="", flush=True)
+            if content.get("name") == "stderr" and (
+                "ERROR:" in text or "WARNING:" in text
+            ):
+                kernel_errors.append(text.strip())
         elif message_type == "error":
             content = message.get("content", {})
             error_name = content.get("ename", "KernelError")
@@ -82,13 +100,15 @@ def run_command(client: BlockingKernelClient, command: str, timeout: int) -> Non
             message_type == "status"
             and message.get("content", {}).get("execution_state") == "idle"
         ):
+            if kernel_errors:
+                raise RuntimeError("SysML validation failed:\n" + "\n".join(kernel_errors))
             return
 
 
 def run_task() -> None:
-    raw_content = os.environ.get("SYSML_CONTENT", "")
+    raw_content = sys.stdin.read()
     if not raw_content.strip():
-        raise ValueError("SYSML_CONTENT is empty")
+        raise ValueError("No SysML content received on stdin")
 
     EXPORT_PATH.unlink(missing_ok=True)
     package_name = f"GeneratedExport_{uuid4().hex}"
@@ -106,6 +126,8 @@ def run_task() -> None:
 
     if not EXPORT_PATH.is_file():
         raise RuntimeError("The SysML kernel completed without producing an export")
+    if EXPORT_PATH.stat().st_size == 0:
+        raise RuntimeError("The SysML kernel produced an empty export")
 
     print(">> Export finished", flush=True)
     print(f"\nExport path: {EXPORT_PATH}", flush=True)
